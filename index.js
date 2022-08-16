@@ -10,6 +10,51 @@ const positionCursorFocus = (target) => {
   target.focus();
 };
 
+const updateUserPassword = async (email, password) => {
+  const response = await fetchQuery({
+    endpoint: API.user.updatePassword,
+    parameters: {
+      email: email,
+      password: password,
+      method: LOCAL_LOGIN_METHOD,
+    },
+  });
+  if (!response.errors) {
+    return true;
+  }
+  return response.errors.msg ? response.errors.msg : response.errors[0].msg;
+};
+
+const hiddenClassName = "hidden";
+const DEFAULT_USER_NAME = "Tabber";
+
+const getEmailsFromString = (string) => {
+  let emails = string.split(",");
+  emails = emails.map((email) => email.trim());
+  emails = emails.filter((email) => email.length > 0);
+  return emails;
+};
+
+const validUserName = (userName) =>
+  !!userName && userName.toLowerCase() !== DEFAULT_USER_NAME.toLowerCase();
+
+const getDaysAsTabber = (date) => {
+  let today = new Date();
+  let initialDate = new Date(date);
+  let difference = today.getTime() - initialDate.getTime();
+  return Math.floor(difference / (1000 * 3600 * 24));
+};
+
+const getUserLevelObject = (treesSaved) => {
+  let userLevelObject;
+  userLevels.forEach((userLevel) => {
+    if (treesSaved >= userLevel.trees) {
+      userLevelObject = userLevel;
+    }
+  });
+  return userLevelObject;
+};
+
 const ACHIEVEMENT_LINK_HEADER = "https://app.opentabs.org/achievement/";
 const DEFAULT_ACHIEVEMENT_LINK = "https://app.opentabs.org/achievement/default";
 const DEFAULT_REFERRAL_LINK = "https://app.opentabs.org/r/default";
@@ -58,6 +103,40 @@ const fetchQuery = ({ endpoint, parameters } = {}) =>
   })
     .then(async (response) => await response.json())
     .catch((error) => (error.response?.data ? error.response.data : error));
+
+const getUserReferral = async (userId) => {
+  const response = await fetchQuery({
+    endpoint: API.user.getReferralUser,
+    parameters: { userId: userId },
+  });
+  if (response.errors) {
+    return;
+  }
+  return response;
+};
+
+const getUserReferrals = async (referralUserIdList) => {
+  let userReferrals = [];
+  const promises = referralUserIdList.map(async (referralUserId) => {
+    const referralUser = await getUserReferral(referralUserId);
+    userReferrals.push(referralUser);
+  });
+  await Promise.all(promises);
+  return userReferrals;
+};
+
+const getResetPasswordOtp = async (email) => {
+  const response = await fetchQuery({
+    endpoint: API.user.sendVerificationOTP,
+    parameters: {
+      email: email,
+    },
+  });
+  if (!response.errors) {
+    return response.code;
+  }
+  return response.errors.msg ? response.errors.msg : response.errors[0].msg;
+};
 
 const copyToClipboard = (ref) => {
   const input = ref.current;
@@ -1957,6 +2036,31 @@ const opentabsLogo = (
   </svg>
 );
 
+const arrow = (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 16 16"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path
+      d="M14.6666 1.33337L7.33325 8.66671"
+      stroke="white"
+      strokeWidth="1.33333"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M14.6666 1.33337L9.99992 14.6667L7.33325 8.66671L1.33325 6.00004L14.6666 1.33337Z"
+      stroke="white"
+      strokeWidth="1.33333"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const DEFAULT_SECONDS_PER_TREE_SAVED = 25;
 const DEFAULT_SECONDS_PER_TAB_OPENED = 1;
 const STORAGE_SECONDS_PER_TAB_OPENED = "secondsPerTabOpened";
@@ -2284,8 +2388,9 @@ const SAVING_TREES_RATE_CHANGED_DATE = new Date(2022, 4, 3, 0, 0, 0);
 const CO2_STORED_PER_TREE = 0.11;
 const STORAGE_RECENT_DAY_TABS_OPENED = "lastTabDay.count";
 const STORAGE_TREES_SAVED = "treesSaved";
-// const SUB_DOMAIN = "http://localhost:5001";
-const SUB_DOMAIN = "https://app.opentabs.org";
+const SUB_DOMAIN = "http://localhost:5001";
+// const SUB_DOMAIN = "https://app.opentabs.org";
+const ACHIEVEMENT_LINK_QUERY = "?level=";
 
 const browsers = {
   [CHROME]: {
@@ -2324,7 +2429,6 @@ const Counter = ({ togglePopup, header, popup }) => {
       {isPopupVisible && (
         <>
           <div className="app-wrapper nipple nipple-top-right">{popup}</div>
-          <div className="popup-overlay" onClick={handleClose}></div>
         </>
       )}
     </>
@@ -2549,10 +2653,10 @@ const ShareOnSocial = ({
 };
 
 const CounterPopup = (props) => {
-  const loggedIn = false;
-
+  const storageUserProfileInString =
+    localStorage.storageUserProfile || localStorage.loggedInData;
+  const loggedIn = !!storageUserProfileInString;
   const handleSignin = () => {};
-
   return (
     <div className="app counter-popup">
       <Heading
@@ -2621,100 +2725,200 @@ const GlobalCounter = () => {
   );
 };
 
+const Separator = () => <div className="horizontal-separator">Or</div>;
+const ShareOnSocialHandles = () => (
+  <div>
+    <h4 className="sub-header">Share on social</h4>
+    <p className="sub-description">
+      Rack up referrals by sharing your personal referral link to your network:
+    </p>
+    <div className="flex-container-space width-60 large-icon">
+      <ShareOnSocial
+        type="giftTrees"
+        showCopyButton={true}
+        //eventProperty={EventPropertyInviteSentReferralsCopyLink2}
+      />
+    </div>
+  </div>
+);
+
+const setUserName = (obj) => {
+  localStorage.storageUserProfile.name = obj.value;
+};
+
+const YourReferralCount = ({ count = 0 } = {}) => (
+  <ColouredCounter text="Your Referral Count" counter={count} />
+);
+
+const TreesSavedByReferrals = ({ treesSaved }) => (
+  <TransparentCounter text="Trees saved by Referrals" counter={treesSaved} />
+);
+
+const ShareYourLink = ({ link, hideMessage = false } = {}) => {
+  const inputRef = React.useRef(null);
+  const buttonRef = React.useRef(null);
+
+  const copyButtonClickHandler = () => {
+    copyToClipboard(inputRef);
+    buttonRef.current.querySelector("span").innerText = "Copied";
+  };
+
+  return (
+    <div className="highlight-background">
+      {hideMessage === false && (
+        <>
+          <h4 className="sub-header">Share your link</h4>
+          <p className="sub-description">
+            Rack up referrals by sharing your personal referral link with
+            others:
+          </p>
+        </>
+      )}
+      <div className="flex-container">
+        <input
+          className="input-box link-input"
+          type="text"
+          readOnly
+          value={link || DEFAULT_REFERRAL_LINK}
+          ref={inputRef}
+        />
+        <button
+          className="button button-primary image-button"
+          onClick={copyButtonClickHandler}
+          ref={buttonRef}
+        >
+          {copy}
+          <span>Copy Link</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const GiftTrees = () => {
   const formRef = React.useRef(null);
+  const nameFormRef = React.useRef(null);
 
   const [treesSavedByReferrals, setTreesSavedByReferrals] = React.useState(0);
   const [showNameFrame, setShowNameFrame] = React.useState(false);
   const [enteredEmails, setEnteredEmails] = React.useState("");
   const [enteredText, setEnteredText] = React.useState("");
+  const [referralList, setReferralList] = React.useState([]);
+  const [user, setUser] = React.useState({});
 
-  // React.useEffect(async () => {
-  // 	// const fetchedUserReferrals = await getUserReferrals(referralList);
-  // 	// setTreesSavedByReferrals(
-  // 	// 	NumberFloor(sumOfTreesInList(fetchedUserReferrals)),
-  // 	// );
-  // 	// Removed cloudsponge button
-  // 	// if (process.env.BUILD_TARGET !== "firefox") addCloudSpongeScript();
-  // }, [referralList]);
+  const fetchUser = async () => {
+    if (localStorage.storageUserProfile || localStorage.loggedInData) {
+      const storageUserProfile = localStorage.storageUserProfile
+        ? JSON.parse(localStorage.storageUserProfile)
+        : JSON.parse(localStorage.loggedInData).user;
+      const response = await fetchQuery({
+        endpoint: API.user.getUser,
+        parameters: {
+          userId: localStorage.storageUserProfile
+            ? storageUserProfile.id
+            : storageUserProfile._id,
+        },
+      });
+      setUser(response.user);
+      if (response?.user.referralsMade?.length) {
+        setReferralList(response.user.referralsMade);
+      }
+    }
+  };
 
-  const referralCount = getReferralCount([]);
-  const referralLink = null
-    ? `${REFERRAL_LINK_HEADER}${id}/`
+  React.useEffect(() => {
+    fetchUser();
+  }, []);
+
+  React.useEffect(() => {
+    fetchUserReferrals();
+  }, [referralList]);
+
+  const fetchUserReferrals = async () => {
+    const fetchedUserReferrals = await getUserReferrals(referralList);
+    setTreesSavedByReferrals(
+      NumberFloor(sumOfTreesInList(fetchedUserReferrals))
+    );
+  };
+
+  const referralCount = addCommas(getReferralCount(referralList));
+
+  const referralLink = user?._id
+    ? `${REFERRAL_LINK_HEADER}${user?._id}/`
     : DEFAULT_REFERRAL_LINK;
-  const userTreesSaved = NumberFloor(0);
+  const userName = user?.name
+    ? user?.name
+    : localStorage.storageUserProfile
+    ? JSON.parse(localStorage.storageUserProfile).name
+    : "";
+  const userTreesSaved = NumberFloor(user?.treesSaved);
 
-  // const sendInvite = async (event) => {
-  // 	event.preventDefault();
-  // 	const form = formRef.current;
-  // 	const emailInput = form.querySelector("input[type=text]");
-  // 	const textArea = form.querySelector("textarea");
-  // 	const button = form.querySelector("button[type=submit]");
-  // 	const emails = getEmailsFromString(emailInput.value);
-  // 	if (validUserName(userName) && revisedNameOnce?.value) {
-  // 		button.setAttribute("disabled", true);
-  // 		const promises = emails.map(async (email) => {
-  // 			logAmplitudeEvent({
-  // 				eventName: EventNameInviteSent,
-  // 				eventProperties: {
-  // 					action: EventPropertyInviteSentReferralsEmail,
-  // 				},
-  // 			});
-  // 			await fetchQuery({
-  // 				endpoint: API.user.sendEmailInvite,
-  // 				parameters: {
-  // 					email: email,
-  // 					content: textArea.value,
-  // 					link: referralLink,
-  // 				},
-  // 			});
-  // 		});
-  // 		await Promise.all(promises);
-  // 		button.removeAttribute("disabled");
-  // 		button.querySelector("span").innerText = "Sent";
-  // 		emailInput.value = "";
-  // 		emailInput.focus();
-  // 	} else {
-  // 		setEnteredEmails(emails);
-  // 		setEnteredText(textArea.value);
-  // 		setShowNameFrame(true);
-  // 	}
-  // };
+  console.log(validUserName(userName));
+  const sendInvite = async (event) => {
+    event.preventDefault();
+    const form = formRef.current;
+    const emailInput = form.querySelector("input[type=text]");
+    const textArea = form.querySelector("textarea");
+    const button = form.querySelector("button[type=submit]");
+    const emails = getEmailsFromString(emailInput.value);
+    if (validUserName(userName)) {
+      button.setAttribute("disabled", true);
+      const promises = emails.map(async (email) => {
+        await fetchQuery({
+          endpoint: API.user.sendEmailInvite,
+          parameters: {
+            email: email,
+            content: textArea.value,
+            link: referralLink,
+          },
+        });
+      });
+      await Promise.all(promises);
+      button.removeAttribute("disabled");
+      button.querySelector("span").innerText = "Sent";
+      emailInput.value = "";
+      emailInput.focus();
+    } else {
+      setEnteredEmails(emails);
+      setEnteredText(textArea.value);
+      setShowNameFrame(true);
+    }
+  };
 
-  // const saveNameAndSendInvite = async (event) => {
-  // 	event.preventDefault();
-  // 	const newName = nameFormRef.current.querySelector("input[type=text]").value;
-  // 	await setUserName({
-  // 		value: newName,
-  // 	});
-  // 	const button = nameFormRef.current.querySelector("button");
-  // 	button.setAttribute("disabled", true);
-  // 	const promises = enteredEmails.map(
-  // 		async (email) =>
-  // 			await fetchQuery({
-  // 				endpoint: API.user.sendEmailInvite,
-  // 				parameters: {
-  // 					email: email,
-  // 					content: enteredText,
-  // 					link: referralLink,
-  // 				},
-  // 			}),
-  // 	);
-  // 	await Promise.all(promises);
-  // 	button.querySelector("span").innerText = "Invite Sent";
-  // 	nameFormRef.current
-  // 		.querySelector("input[type=text]")
-  // 		.classList.add(hiddenClassName);
-  // 	revisedNameOnce?.value === false &&
-  // 		updateMiscellaneousAction(revisedNameOnce);
-  // };
+  const saveNameAndSendInvite = async (event) => {
+    event.preventDefault();
+    const newName = nameFormRef.current.querySelector("input[type=text]").value;
+    // setUserName({
+    //   value: newName,
+    // });
+    const button = nameFormRef.current.querySelector("button");
+    button.setAttribute("disabled", true);
+    const promises = enteredEmails.map(
+      async (email) =>
+        await fetchQuery({
+          endpoint: API.user.sendEmailInvite,
+          parameters: {
+            email: email,
+            content: enteredText,
+            link: referralLink,
+          },
+        })
+    );
+    await Promise.all(promises);
+    button.querySelector("span").innerText = "Invite Sent";
+    nameFormRef.current
+      .querySelector("input[type=text]")
+      .classList.add(hiddenClassName);
+    revisedNameOnce?.value === false &&
+      updateMiscellaneousAction(revisedNameOnce);
+  };
 
   const INVITE_MESSAGE = `Hey, ${
     userTreesSaved === 0
       ? `I'm saving trees`
       : userTreesSaved === 1
       ? `I've saved a tree`
-      : `I've saved ${addCommas(0)} trees`
+      : `I've saved ${addCommas(userTreesSaved)} trees`
   } with OpenTabs, and I think you should too! It's a browser extension that saves a tree for every 10 tabs you open, so it's an easy (and free) way to help the environment. Give it a try, they're currently saving 10 trees for every new person that joins:`;
 
   const ShareOnEmail = () => (
@@ -2724,8 +2928,7 @@ const GiftTrees = () => {
         Invite people to join OpenTabs by entering in their e-mails. (We'll
         automatically add your referral link.)
       </p>
-      {/* <form ref={formRef} onSubmit={sendInvite}> */}
-      <form>
+      <form ref={formRef} onSubmit={sendInvite}>
         <div className="flex-container">
           <input
             className="input-box flex-auto mt-8 mr-8 cloudsponge-contacts"
@@ -2752,7 +2955,7 @@ const GiftTrees = () => {
           type="submit"
           className="button button-primary image-button width-45 mt-16"
         >
-          {/* {arrow} */}
+          {arrow}
           <span>Send the invite</span>
         </button>
       </form>
@@ -2772,8 +2975,7 @@ const GiftTrees = () => {
         Enter your name so your friends recognize you. Email invites are 83%
         more likely to be accepted if sent with your name.
       </p>
-      <form>
-        {/* <form ref={nameFormRef} onSubmit={saveNameAndSendInvite}> */}
+      <form ref={nameFormRef} onSubmit={saveNameAndSendInvite}>
         <input
           className="input-box width-100 mt-8"
           type="text"
@@ -2799,23 +3001,20 @@ const GiftTrees = () => {
         description="Invite your friends to OpenTabs and we'll save 5 trees for them. We'll also save another 5 trees for you too, just so you don't feel left out. There's no limit, so if you have lot of friends, invite them all. 😏"
       />
       <div className="flex-container-space">
-        {/* <YourReferralCount count={referralCount} /> */}
+        <YourReferralCount count={referralCount} />
         <div className="popup-colour">
-          {/* <TreesSavedByReferrals
-						treesSaved={addCommas(treesSavedByReferrals)}
-					/> */}
+          <TreesSavedByReferrals
+            treesSaved={addCommas(treesSavedByReferrals)}
+          />
         </div>
       </div>
       <div className="mb-20">
-        {/* <ShareYourLink
-					link={referralLink}
-					eventProperty={EventPropertyInviteSentReferralsCopyLink1}
-				/> */}
+        <ShareYourLink link={referralLink} />
       </div>
-      {/* <Separator /> */}
+      <Separator />
       <ShareOnEmail />
-      {/* <Separator />
-			<ShareOnSocialHandles /> */}
+      <Separator />
+      <ShareOnSocialHandles />
     </>
   );
 
@@ -2832,8 +3031,6 @@ const settingsViewAboutUs = "About Us";
 const settingsNavList = [
   settingsViewAwards,
   settingsViewGiftTrees,
-  settingsViewCommunity,
-  settingsViewRateUs,
   settingsViewMyAccount,
   settingsViewAboutUs,
 ];
@@ -2937,9 +3134,13 @@ const AwardHighlight = ({ link, activeLevel }) =>
 
 const Awards = () => {
   // TODO: move this data up, cause its repititive
-  const currentLevel = 0,
-    userLevelObject = 0;
-  const achievementLink = null
+  const storageUserProfile = localStorage.storageUserProfile
+    ? JSON.parse(localStorage.storageUserProfile)
+    : {};
+  const { id, treesSaved } = storageUserProfile;
+  const userLevelObject = getUserLevelObject(treesSaved);
+  const currentLevel = userLevelObject?.level || 0;
+  const achievementLink = id
     ? `${ACHIEVEMENT_LINK_HEADER}${id}${ACHIEVEMENT_LINK_QUERY}${currentLevel}`
     : DEFAULT_ACHIEVEMENT_LINK;
 
@@ -3002,13 +3203,13 @@ const ContactUsLink = "https://opentabs.contactin.bio";
 
 const aboutUsAnchorList = [
   { name: "Show Bookmarks", link: ShowBookmarksLink },
-  { name: "Financial Reports", link: FinancialReportsLink },
+  // { name: "Financial Reports", link: FinancialReportsLink },
   { name: "About Us", link: WebsiteAboutLink },
-  { name: "Shop", link: ShopLink },
+  // { name: "Shop", link: ShopLink },
   { name: "Privacy Policy", link: PrivacyPolicyLink },
   { name: "Terms of Service", link: WebsiteTermsLink },
   { name: "FAQs", link: FAQsLink },
-  { name: "Careers", link: CareersLink },
+  // { name: "Careers", link: CareersLink },
   { name: "Contact Us", link: ContactUsLink },
 ];
 
@@ -3132,7 +3333,7 @@ const AboutUs = () => (
   <>
     <ViewHeader
       header="About Us"
-      description="OpenTabs is a non-profit startup that transforms the everyday action of opening a new tab into a force of sustainable development. We believe that everyone who wants to fight climate change should be able to, regardless of how much time or money they have."
+      description="OpenTabs is transforming the internet into a force of sustainable development. We believe that everyone who wants to fight climate change should be able to, regardless of how much time or money they have."
     />
     <div className="has-2-col">
       <div className="left-col">
@@ -3218,6 +3419,40 @@ function CountersContainer() {
 }
 
 const RADIUS = 15.3843;
+const logo = (
+  <svg
+    width="35"
+    height="34"
+    viewBox="0 0 35 34"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className="progress-circle-logo"
+  >
+    <circle
+      cx="17.8994"
+      cy="16.9298"
+      r={RADIUS}
+      stroke="#E9E9E9"
+      strokeOpacity="0.8"
+      strokeWidth="3.09091"
+      className="progress-circle-bg"
+    />
+    <circle
+      cx="17.8994"
+      cy="16.9298"
+      r={RADIUS}
+      strokeWidth="3.09091"
+      // style={{ strokeDashoffset: dashOffset }}
+      transform="rotate(-90 18 17)"
+      className="progress-circle"
+    />
+    <path d="M28.014 17.3449C25.2524 17.7681 23.1672 19.1789 21.6737 21.5207C21.5046 21.7746 21.5891 21.9157 21.8709 21.9721C22.2936 22.0285 22.6881 22.0568 23.1108 22.1132C25.6469 22.085 27.9012 20.2792 28.493 17.8245C28.5775 17.3731 28.493 17.2603 28.014 17.3449Z" />
+    <path d="M24.407 17.0628C24.5761 16.9781 24.717 16.6678 24.717 16.4703C24.717 15.1442 24.4352 13.8745 23.8716 12.6331C23.7025 12.2663 23.4489 12.2381 23.1671 12.4638C22.7444 12.7741 22.3218 13.0563 21.9554 13.4231C20.2083 15.0595 19.5039 18.0221 20.7719 20.1382C21.1382 19.9971 21.4482 19.461 21.73 19.1507C22.519 18.3324 23.3644 17.6271 24.407 17.0628Z" />
+    <path d="M19.2498 19.8559C18.8835 19.0941 18.7144 18.2195 18.7144 17.373C18.7144 16.3009 18.9962 15.2852 19.5035 14.4387C19.7852 13.9591 20.1234 13.5076 20.5461 13.1408C20.7997 12.8023 20.8279 12.4637 20.6588 12.0687C20.1798 10.9683 19.588 9.95256 18.7708 9.07791C18.3199 8.62647 18.2636 8.62647 17.9818 9.19077C16.5728 12.1533 16.3192 15.1441 17.1928 18.1631C17.2491 18.3323 17.2773 18.5016 17.3337 18.6427C17.4182 18.8684 17.4746 19.0659 17.5591 19.2917C17.6436 19.5456 17.7 19.8277 17.7845 20.0817C19.2498 24.455 17.221 27.9536 16.0093 30.2108C15.8684 30.4929 15.5584 30.8597 16.2065 30.8879C17.221 30.9161 18.2636 30.9161 19.278 30.8879C19.4189 30.8879 19.6162 30.634 19.7007 30.5211C20.5461 29.1386 21.5887 25.5553 20.7433 23.3546C20.2643 22.1131 19.8134 21.041 19.2498 19.8559Z" />
+    <path d="M15.6995 17.9656C15.8122 17.9938 16.0095 18.022 16.0658 17.9374C16.1222 17.8527 16.1222 17.6834 16.0658 17.5706C15.5868 16.2163 15.3895 14.8055 15.5304 13.3666C15.5586 13.1691 15.3895 12.8869 15.2204 12.7741C14.3187 12.1251 13.3324 11.7301 12.2616 11.5044C11.9235 11.4198 11.7544 11.5326 11.7262 11.8712C11.6135 13.3384 11.7262 14.608 12.5998 15.8213C13.3606 16.8652 14.4596 17.627 15.6995 17.9656Z" />
+    <path d="M17.1655 22.5082C17.2782 22.2825 17.25 22.0568 17.2218 21.8028C17.1373 21.041 16.8273 20.251 16.2638 19.7432C14.9393 18.5581 12.9668 18.9249 12.0087 17.1474C11.7833 16.7524 11.6424 16.2727 11.2479 16.047C11.0506 15.9342 10.8252 15.8777 10.5998 15.8495C9.52897 15.7085 8.42999 15.7649 7.38736 15.9906C6.99286 16.0752 6.85196 16.2445 7.02104 16.696C7.72551 18.7274 9.19082 20.4767 11.0506 21.5489C12.0087 22.085 13.0232 22.48 14.1222 22.6775C14.6576 22.7339 16.8837 23.1289 17.1655 22.5082Z" />
+  </svg>
+);
 
 const CounterHeader = ({ counter, logo }) => (
   <>
@@ -3228,71 +3463,48 @@ const CounterHeader = ({ counter, logo }) => (
 
 const IndividualCounter = () => {
   const individualCounterRef = React.useRef(null);
-  const [user, setUser] = React.useState({ treesSaved: 0, searchCount: 0 });
+  const [user, setUser] = React.useState({});
 
-  React.useEffect(() => {
-    if (localStorage.storageUserProfile) {
-      const data = JSON.parse(localStorage.storageUserProfile);
-      setUser({ treesSaved: data.treesSaved, searchCount: 0 });
-    }
-  }, []);
+  // React.useEffect(() => {
+  //   fetchUser();
+  // }, []);
 
-  let userTreesSaved,
-    userTabsOpened = 0;
+  // const fetchUser = async () => {
+  //   if (localStorage.storageUserProfile || localStorage.loggedInData) {
+  //     const storageUserProfile = localStorage.storageUserProfile
+  //       ? JSON.parse(localStorage.storageUserProfile)
+  //       : JSON.parse(localStorage.loggedInData).user;
+  //     const response = await fetchQuery({
+  //       endpoint: API.user.getUser,
+  //       parameters: {
+  //         userId: localStorage.storageUserProfile
+  //           ? storageUserProfile.id
+  //           : storageUserProfile._id,
+  //       },
+  //     });
+  //     setUser(response.user);
+  //   }
+  // };
 
-  const localTreesSaved = localStorage.getItem(STORAGE_TREES_SAVED) || 53.6;
-  let tabsOpened = 0;
+  // const localTreesSaved = user?.treesSaved || 53.6;
+  // let tabsOpened = 0;
+  // let userTreesSaved = 0;
 
-  if (!!localTreesSaved || localTreesSaved === 0)
-    userTreesSaved = NumberFloor(localTreesSaved);
-  if (!!tabsOpened) userTabsOpened = NumberFloor(tabsOpened);
+  // if (!!localTreesSaved || localTreesSaved === 0)
+  //   userTreesSaved = NumberFloor(localTreesSaved);
+  // if (!!tabsOpened) userTabsOpened = NumberFloor(tabsOpened);
   const onWidgetClick = () => {};
-
-  const logo = (
-    <svg
-      width="35"
-      height="34"
-      viewBox="0 0 35 34"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className="progress-circle-logo"
-    >
-      <circle
-        cx="17.8994"
-        cy="16.9298"
-        r={RADIUS}
-        stroke="#E9E9E9"
-        strokeOpacity="0.8"
-        strokeWidth="3.09091"
-        className="progress-circle-bg"
-      />
-      <circle
-        cx="17.8994"
-        cy="16.9298"
-        r={RADIUS}
-        strokeWidth="3.09091"
-        // style={{ strokeDashoffset: dashOffset }}
-        transform="rotate(-90 18 17)"
-        className="progress-circle"
-      />
-      <path d="M28.014 17.3449C25.2524 17.7681 23.1672 19.1789 21.6737 21.5207C21.5046 21.7746 21.5891 21.9157 21.8709 21.9721C22.2936 22.0285 22.6881 22.0568 23.1108 22.1132C25.6469 22.085 27.9012 20.2792 28.493 17.8245C28.5775 17.3731 28.493 17.2603 28.014 17.3449Z" />
-      <path d="M24.407 17.0628C24.5761 16.9781 24.717 16.6678 24.717 16.4703C24.717 15.1442 24.4352 13.8745 23.8716 12.6331C23.7025 12.2663 23.4489 12.2381 23.1671 12.4638C22.7444 12.7741 22.3218 13.0563 21.9554 13.4231C20.2083 15.0595 19.5039 18.0221 20.7719 20.1382C21.1382 19.9971 21.4482 19.461 21.73 19.1507C22.519 18.3324 23.3644 17.6271 24.407 17.0628Z" />
-      <path d="M19.2498 19.8559C18.8835 19.0941 18.7144 18.2195 18.7144 17.373C18.7144 16.3009 18.9962 15.2852 19.5035 14.4387C19.7852 13.9591 20.1234 13.5076 20.5461 13.1408C20.7997 12.8023 20.8279 12.4637 20.6588 12.0687C20.1798 10.9683 19.588 9.95256 18.7708 9.07791C18.3199 8.62647 18.2636 8.62647 17.9818 9.19077C16.5728 12.1533 16.3192 15.1441 17.1928 18.1631C17.2491 18.3323 17.2773 18.5016 17.3337 18.6427C17.4182 18.8684 17.4746 19.0659 17.5591 19.2917C17.6436 19.5456 17.7 19.8277 17.7845 20.0817C19.2498 24.455 17.221 27.9536 16.0093 30.2108C15.8684 30.4929 15.5584 30.8597 16.2065 30.8879C17.221 30.9161 18.2636 30.9161 19.278 30.8879C19.4189 30.8879 19.6162 30.634 19.7007 30.5211C20.5461 29.1386 21.5887 25.5553 20.7433 23.3546C20.2643 22.1131 19.8134 21.041 19.2498 19.8559Z" />
-      <path d="M15.6995 17.9656C15.8122 17.9938 16.0095 18.022 16.0658 17.9374C16.1222 17.8527 16.1222 17.6834 16.0658 17.5706C15.5868 16.2163 15.3895 14.8055 15.5304 13.3666C15.5586 13.1691 15.3895 12.8869 15.2204 12.7741C14.3187 12.1251 13.3324 11.7301 12.2616 11.5044C11.9235 11.4198 11.7544 11.5326 11.7262 11.8712C11.6135 13.3384 11.7262 14.608 12.5998 15.8213C13.3606 16.8652 14.4596 17.627 15.6995 17.9656Z" />
-      <path d="M17.1655 22.5082C17.2782 22.2825 17.25 22.0568 17.2218 21.8028C17.1373 21.041 16.8273 20.251 16.2638 19.7432C14.9393 18.5581 12.9668 18.9249 12.0087 17.1474C11.7833 16.7524 11.6424 16.2727 11.2479 16.047C11.0506 15.9342 10.8252 15.8777 10.5998 15.8495C9.52897 15.7085 8.42999 15.7649 7.38736 15.9906C6.99286 16.0752 6.85196 16.2445 7.02104 16.696C7.72551 18.7274 9.19082 20.4767 11.0506 21.5489C12.0087 22.085 13.0232 22.48 14.1222 22.6775C14.6576 22.7339 16.8837 23.1289 17.1655 22.5082Z" />
-    </svg>
-  );
 
   const counterDataList = [
     {
       title: "Trees you have saved",
       image: colourLogo,
-      value: addCommas(Math.floor(user.treesSaved)),
+      value: addCommas(Math.floor(user?.treesSaved)),
     },
     {
       title: "Searches you have made",
       image: tab,
-      value: addCommas(user.searchCount),
+      value: addCommas(user?.searchCount ? user?.searchCount : 0),
     },
     {
       title: "Tons of CO2 eq. you have stored",
@@ -3301,20 +3513,25 @@ const IndividualCounter = () => {
     },
   ];
 
-  // React.useEffect(() => {
-  //   const user = JSON.parse(localStorage.opentabs);
-  //   getPersonalCounters(user?.id);
-  // }, []);
+  React.useEffect(() => {
+    if (localStorage.storageUserProfile) {
+      const storageUserProfile = JSON.parse(localStorage.storageUserProfile)
+       const id = storageUserProfile?.id;
+      getPersonalCounters(id);
+    }
+  }, []);
 
   const getPersonalCounters = async (userId) => {
+    if(top != self) return;
+    if(!location.origin.includes("http://127.0.0.1")) return;
     try {
       const response = await fetch(
         `${SUB_DOMAIN}/api/users/updateUserInfo`,
         getPostHeader({ userId, update: true })
       );
-
       const user = await response.json();
-      setUser(user);
+      console.log(user.user);
+      setUser(user.user);
     } catch (error) {
       console.error(error);
     }
@@ -3377,7 +3594,7 @@ const HeaderDescription = ({ loggedIn, name, logOut }) => (
           <span className="primary-text-colour fw-600"> {name}</span>.
         </span>
         <br />
-        <span>
+        {/* <span>
           If you're not {name} you can
           <span
             className="primary-text-colour button-text fw-600"
@@ -3387,7 +3604,7 @@ const HeaderDescription = ({ loggedIn, name, logOut }) => (
             log out
           </span>{" "}
           before logging in as different user.
-        </span>
+        </span> */}
       </>
     ) : (
       <span>
@@ -3469,7 +3686,7 @@ const AccountStatistics = ({
     <hr className="width-100 pb-18 white-horizontal" />
     <p className="pb-4 fw-600">Your Stats</p>
     <div className="width-100 flex-container-space">
-      {/* <StatsColumn text="Days as a Tabber" number={daysAsTabber} /> */}
+      <StatsColumn text="Days as a Tabber" number={daysAsTabber} />
       <StatsColumn text="Tabbers Invited" number={referralCount} />
       <StatsColumn text="Rippled Tabbers" number={rippledReferrals} />
     </div>
@@ -3588,10 +3805,7 @@ const signUpUser = async (email, password, name) => {
       method: LOCAL_LOGIN_METHOD,
     },
   });
-  console.log(response);
   if (!response.errors) {
-    console.log("success", response);
-
     return true;
   }
   console.log("error", response);
@@ -3609,7 +3823,6 @@ const mergeUpUser = async (email, password, userId) => {
     },
   });
   if (!response.errors) {
-    console.log("success", response);
     return true;
   }
   console.log("error", response);
@@ -3627,7 +3840,6 @@ const logUserIn = async (email, password) => {
     },
   });
   if (!response.errors) {
-    console.log("success", response);
     localStorage.setItem("loggedInData", JSON.stringify(response));
     return true;
   }
@@ -3641,26 +3853,16 @@ const MyAccount = () => {
   // 	getResetPasswordOtp,
   // 	updateUserPassword,
   // } = useAuth();
-  let id = 1,
-    referralList = [];
-  let name = "john",
-    treesSaved = 10,
-    userCreatedDate = new Date(),
-    installDate = new Date();
+  // let id = 1,
+  //   userCreatedDate = new Date(),
+  //   installDate = new Date();
   // const { name, email, treesSaved, userCreatedDate, installDate } =
   // 	storageUserProfile;
 
-  const [mode, setMode] = React.useState(() => {
-    const loggedData = localStorage.getItem("loggedInData");
-    if (!loggedData) return LOG_IN_MODE;
-    return LOGGED_IN_MODE;
-  });
-
+  const [mode, setMode] = React.useState(LOG_IN_MODE);
   const [enteredEmail, setEnteredEmail] = React.useState("");
-  const [loggedIn, setLogedIn] = React.useState(() => {
-    const loggedData = localStorage.getItem("loggedInData");
-    return !!loggedData;
-  });
+  const [loggedIn, setLogedIn] = React.useState(false);
+  const [name, setName] = React.useState("");
   const [enteredPassword, setEnteredPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [showError, setShowError] = React.useState(false);
@@ -3668,12 +3870,15 @@ const MyAccount = () => {
   const [isLoading, setIsLoading] = React.useState(false);
   const [enteredVerificationCode, setEnteredVerificationCode] =
     React.useState("");
-  const [verificationCode, setVerificationCode] = React.useState("");
   const [rippledTreesSaved, setRippledTreesSaved] = React.useState(0);
   const [rippledReferrals, setRippledReferrals] = React.useState([]);
-
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
+  const [referralList, setReferralList] = React.useState([]);
+  const [treesSaved, setTreesSaved] = React.useState(0);
+  const [verificationCode, setVerificationCode] = React.useState(0);
+  const [userCreatedDate, setUserCreatedDate] = React.useState(
+    new Date().toISOString()
+  );
+  const [user, setUser] = React.useState({});
 
   const getRippledReferrals = async ({ userId, rippleDepth = 0 } = {}) => {
     if (rippleDepth < RIPPLE_DEPTH_LEVEL) {
@@ -3701,17 +3906,83 @@ const MyAccount = () => {
   };
 
   React.useEffect(() => {
-    // if (mode === LOGGED_IN_MODE) {
-    //   await getRippledReferrals({ userId: id });
-    // }
-  }, [referralList, loggedIn]);
+    const storageUserProfileInString =
+      localStorage.storageUserProfile || localStorage.loggedInData;
+    if (!storageUserProfileInString) return;
+    const parsedStorageUserProfile = localStorage.storageUserProfile
+      ? JSON.parse(storageUserProfileInString)
+      : JSON.parse(storageUserProfileInString).user;
+
+    if (
+      parsedStorageUserProfile?.email ||
+      parsedStorageUserProfile?.id ||
+      parsedStorageUserProfile?._id
+    ) {
+      setMode(LOGGED_IN_MODE);
+      setLogedIn(true);
+      let name = localStorage.storageUserProfile
+        ? parsedStorageUserProfile.name
+        : parsedStorageUserProfile.local.name;
+      setName(name);
+    }
+  }, [localStorage.storageUserProfile, localStorage.loggedInData]);
 
   React.useEffect(() => {
-    // if (mode === LOGGED_IN_MODE) {
-    //   const fetchedRippledReferrals = await getUserReferrals(rippledReferrals);
-    //   setRippledTreesSaved(sumOfTreesInList(fetchedRippledReferrals));
-    // }
+    fetchUser();
+  }, []);
+  React.useEffect(() => {
+    fetchedRippledReferrals();
+  }, [referralList, loggedIn]);
+
+  const fetchedRippledReferrals = async () => {
+    if (localStorage.storageUserProfile || localStorage.loggedInData) {
+      const storageUserProfile = localStorage.storageUserProfile
+        ? JSON.parse(localStorage.storageUserProfile)
+        : JSON.parse(localStorage.loggedInData).user;
+      if (mode === LOGGED_IN_MODE) {
+        await getRippledReferrals({
+          userId: localStorage.storageUserProfile
+            ? storageUserProfile.id
+            : storageUserProfile._id,
+        });
+      }
+    }
+  };
+
+  console.log({ user });
+
+  const fetchUser = async () => {
+    if (localStorage.storageUserProfile || localStorage.loggedInData) {
+      const storageUserProfile = localStorage.storageUserProfile
+        ? JSON.parse(localStorage.storageUserProfile)
+        : JSON.parse(localStorage.loggedInData).user;
+      const response = await fetchQuery({
+        endpoint: API.user.getUser,
+        parameters: {
+          userId: localStorage.storageUserProfile
+            ? storageUserProfile.id
+            : storageUserProfile._id,
+        },
+      });
+      setUser(response.user);
+      setTreesSaved(response.user?.treesSaved);
+      setUserCreatedDate(response.user?.dateCreated);
+      if (response?.user.referralsMade?.length) {
+        setReferralList(response.user.referralsMade);
+      }
+    }
+  };
+
+  React.useEffect(() => {
+    fetchRippledReferrals();
   }, [rippledReferrals]);
+
+  const fetchRippledReferrals = async () => {
+    if (mode === LOGGED_IN_MODE) {
+      const fetchedRippledReferrals = await getUserReferrals(rippledReferrals);
+      setRippledTreesSaved(sumOfTreesInList(fetchedRippledReferrals));
+    }
+  };
 
   const emailChangeHandler = (event) => {
     setShowError(false);
@@ -3735,71 +4006,71 @@ const MyAccount = () => {
 
   const formSubmitHandler = async (event) => {
     event.preventDefault();
-    // setIsLoading(true);
-    // switch (mode) {
-    // 	case RESET_PASSWORD_MODE: {
-    // 		const otpResponse = await getResetPasswordOtp(enteredEmail);
-    // 		setIsLoading(false);
-    // 		if (Number(otpResponse)) {
-    // 			setVerificationCode(otpResponse);
-    // 			setMode(VERIFY_OTP_MODE);
-    // 		} else {
-    // 			setShowError(true);
-    // 			setErrorMessage(otpResponse);
-    // 		}
-    // 		break;
-    // 	}
-    // 	case VERIFY_OTP_MODE: {
-    // 		setIsLoading(false);
-    // 		const isVerified = Number(enteredVerificationCode) === verificationCode;
-    // 		if (isVerified) {
-    // 			setMode(EDIT_RESET_PASSWORD_MODE);
-    // 		} else {
-    // 			setShowError(true);
-    // 			setErrorMessage("Invalid verification code");
-    // 		}
-    // 		break;
-    // 	}
-    // 	case EDIT_RESET_PASSWORD_MODE: {
-    // 		setIsLoading(false);
-    // 		const isValid = confirmPassword.length > 4;
-    // 		if (isValid) {
-    // 			setIsLoading(true);
-    // 			const response = await updateUserPassword(
-    // 				enteredEmail,
-    // 				confirmPassword,
-    // 			);
-    // 			setIsLoading(false);
-    // 			if (response === true) {
-    // 				setIsLoading(true);
-    // 				const loginResponse = await logUserIn(
-    // 					enteredEmail,
-    // 					confirmPassword,
-    // 				);
-    // 				setIsLoading(false);
-    // 				loginResponse ? setMode(LOGGED_IN_MODE) : setMode(LOG_IN_MODE);
-    // 			}
-    // 		} else {
-    // 			setShowError(true);
-    // 			setErrorMessage("Password must be at least 5 characters");
-    // 		}
-    // 		break;
-    // 	}
-    // 	case EDIT_PASSWORD_MODE: {
-    // 		setIsLoading(false);
-    // 		const isValid = confirmPassword.length > 4;
-    // 		if (isValid) {
-    // 			setIsLoading(true);
-    // 			const response = await updateUserPassword(email, confirmPassword);
-    // 			setIsLoading(false);
-    // 			response === true && setMode(LOGGED_IN_MODE);
-    // 		} else {
-    // 			setShowError(true);
-    // 			setErrorMessage("Password must be at least 5 characters");
-    // 		}
-    // 		break;
-    // 	}
-    // }
+    setIsLoading(true);
+    switch (mode) {
+      case RESET_PASSWORD_MODE: {
+        const otpResponse = await getResetPasswordOtp(enteredEmail);
+        setIsLoading(false);
+        if (Number(otpResponse)) {
+          setVerificationCode(otpResponse);
+          setMode(VERIFY_OTP_MODE);
+        } else {
+          setShowError(true);
+          setErrorMessage(otpResponse);
+        }
+        break;
+      }
+      case VERIFY_OTP_MODE: {
+        setIsLoading(false);
+        const isVerified = Number(enteredVerificationCode) === verificationCode;
+        if (isVerified) {
+          setMode(EDIT_RESET_PASSWORD_MODE);
+        } else {
+          setShowError(true);
+          setErrorMessage("Invalid verification code");
+        }
+        break;
+      }
+      case EDIT_RESET_PASSWORD_MODE: {
+        setIsLoading(false);
+        const isValid = confirmPassword.length > 4;
+        if (isValid) {
+          setIsLoading(true);
+          const response = await updateUserPassword(
+            enteredEmail,
+            confirmPassword
+          );
+          setIsLoading(false);
+          if (response === true) {
+            setIsLoading(true);
+            const loginResponse = await logUserIn(
+              enteredEmail,
+              confirmPassword
+            );
+            setIsLoading(false);
+            loginResponse ? setMode(LOGGED_IN_MODE) : setMode(LOG_IN_MODE);
+          }
+        } else {
+          setShowError(true);
+          setErrorMessage("Password must be at least 5 characters");
+        }
+        break;
+      }
+      case EDIT_PASSWORD_MODE: {
+        setIsLoading(false);
+        const isValid = confirmPassword.length > 4;
+        if (isValid) {
+          setIsLoading(true);
+          const response = await updateUserPassword(email, confirmPassword);
+          setIsLoading(false);
+          response === true && setMode(LOGGED_IN_MODE);
+        } else {
+          setShowError(true);
+          setErrorMessage("Password must be at least 5 characters");
+        }
+        break;
+      }
+    }
   };
 
   let defaultEmailInputField = (
@@ -4039,9 +4310,7 @@ const MyAccount = () => {
     mode === LOGGED_IN_MODE ? (
       <AccountStatistics
         treesSaved={addCommas(NumberFloor(treesSaved))}
-        // daysAsTabber={addCommas(
-        // getDaysAsTabber(userCreatedDate ? userCreatedDate : installDate)
-        // )}
+        daysAsTabber={addCommas(getDaysAsTabber(userCreatedDate))}
         referralCount={addCommas(getReferralCount(referralList))}
         rippledTreesSaved={addCommas(NumberFloor(rippledTreesSaved))}
         rippledReferrals={addCommas(rippledReferrals.length)}
